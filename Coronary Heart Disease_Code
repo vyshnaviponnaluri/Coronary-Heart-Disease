@@ -1,0 +1,159 @@
+{\rtf1\ansi\deff0\nouicompat{\fonttbl{\f0\fnil\fcharset0 Courier New;}}
+{\*\generator Riched20 10.0.16299}\viewkind4\uc1 
+\pard\f0\fs22\lang1033 #Read data \par
+data=read.csv("Coronary_heart_risk_study.csv")\par
+# to find the missing values in the dataset\par
+apply(is.na(data),2,sum)\par
+str(data)\par
+attach(data)\par
+data$male=as.factor(data$male)\par
+data$education=as.ordered(data$education)\par
+data$currentSmoker=as.factor(data$currentSmoker)\par
+data$BPMeds=as.factor(data$BPMeds)\par
+data$prevalentStroke=as.factor(data$prevalentStroke)\par
+data$prevalentHyp=as.factor(data$prevalentHyp)\par
+data$diabetes=as.factor(data$diabetes)\par
+data$TenYearCHD=as.factor(data$TenYearCHD)\par
+\par
+# for imputing NAs in the data set \par
+#install.packages("mice")\par
+library(mice)\par
+set.seed(321)\par
+mice.data = mice(data, method = "pmm", maxit=65, printFlag=F)\par
+newdata = mice::complete(mice.data)\par
+apply(is.na(newdata),2,sum)\par
+head(newdata)\par
+\par
+#Transform the continous variables \par
+library(lattice)\par
+newdata$cigsPerDay <- sqrt(newdata$cigsPerDay)\par
+newdata$totChol <- sqrt(newdata$totChol)\par
+newdata$sysBP <- sqrt(newdata$sysBP)\par
+newdata$diaBP <- sqrt(newdata$diaBP)\par
+newdata$BMI <- sqrt(newdata$BMI)\par
+newdata$heartRate <- sqrt(newdata$heartRate)\par
+newdata$glucose <- sqrt(newdata$glucose)\par
+\par
+#split data into test and train\par
+set.seed(321)\par
+library(caret)\par
+index = createDataPartition(newdata$TenYearCHD,p=0.7,list=F)\par
+data_train_df = newdata[index,]\par
+data_test_df = newdata[-index,]\par
+dim(data_train_df)\par
+\par
+# Class balance info\par
+table(data_train_df$TenYearCHD)\par
+prop.table(table(data_train_df$TenYearCHD))\par
+table(data_test_df$TenYearCHD)\par
+prop.table(table(data_test_df$TenYearCHD))\par
+\par
+# dummy coding\par
+data_dummy_coded = model.matrix(TenYearCHD~.,data=newdata)\par
+dim(data_dummy_coded)\par
+set.seed(321)\par
+x_train = data_dummy_coded[index,]\par
+x_test = data_dummy_coded[-index,]\par
+dim(x_train)\par
+dim(x_test)\par
+\par
+# Logistic regression model\par
+library(glmnet)\par
+lasso_model = glmnet(x_train,data_train_df$TenYearCHD,family="binomial",nlambda=50,alpha =1)\par
+summary(lasso_model)\par
+select_coeff = as.matrix(coef(lasso_model, s=0.02))\par
+select_coeff_df = data.frame(Feature=rownames(select_coeff),Coef=select_coeff[,1])\par
+#install.packages("dplyr")\par
+library(dplyr)\par
+select_coeff_df %>% filter(Coef!=0)\par
+# verification on train data set\par
+lambda_select = 0\par
+#type = class will predict class\par
+#type = response will predict probability\par
+lasso_pred_train <- predict(lasso_model, newx = x_train, type="class",s=lambda_select)[,1]\par
+pred_df_train = data.frame(Actual = data_train_df$TenYearCHD, pred=lasso_pred_train)\par
+\par
+library(e1071)\par
+confusion_matrix_logistic_train = confusionMatrix(pred_df_train$Actual,pred_df_train$pred)\par
+confusion_matrix_logistic_train\par
+#Plotting the ROC Curve\par
+library(ROCR)\par
+lasso_pred_train=predict(lasso_model,newx = x_train,type="response",s=lambda_select)[,1]\par
+pred = ROCR::prediction(lasso_pred_train,data_train_df$TenYearCHD)\par
+perf = ROCR::performance(prediction.obj = pred, measure="tpr",x.measure = "fpr")\par
+plot(perf,main = "ROC_lasso_train",col="blue",lty=1,lwd=2)\par
+abline(a=0,b=1,col="yellow")\par
+\par
+# verification on test data set\par
+lasso_pred_test <- predict(lasso_model, newx = x_test, type="class",s=lambda_select)[,1]\par
+pred_df_test = data.frame(Actual = data_test_df$TenYearCHD, pred=lasso_pred_test)\par
+confusion_matrix_logistic_test = confusionMatrix(pred_df_test$Actual,pred_df_test$pred)\par
+confusion_matrix_logistic_test\par
+\par
+#Plotting the ROC Curve\par
+lasso_pred_test=predict(lasso_model,newx = x_test,type="response",s=lambda_select)[,1]\par
+pred = ROCR::prediction(lasso_pred_test,data_test_df$TenYearCHD)\par
+perf = ROCR::performance(prediction.obj = pred, measure="tpr",x.measure = "fpr")\par
+plot(perf,main = "ROC_lasso_test",col="black",lty=1,lwd=2)\par
+abline(a=0,b=1,col="red")\par
+\par
+# Perform SVM\par
+library(e1071)        # For SVM Model\par
+model_svm = svm(data_train_df$TenYearCHD~., data=data_train_df, kernel="linear",cost=10,scale=TRUE)\par
+summary(model_svm)\par
+\par
+# Verifying svm model performance on train data\par
+data_pred_svm_train = predict(model_svm, data_train_df)\par
+confusion_matrix_SVM_train = confusionMatrix(data_train_df$TenYearCHD,data_pred_svm_train)\par
+confusion_matrix_SVM_train \par
+\par
+# Verifying svm model performance on test data\par
+data_pred_svm_test = predict(model_svm, data_test_df)\par
+confusion_matrix_SVM_test = confusionMatrix(data_test_df$TenYearCHD,data_pred_svm_test)\par
+confusion_matrix_SVM_test \par
+\par
+# Naive Bayes\par
+library(naivebayes)\par
+nb <- naive_bayes(data_train_df$TenYearCHD~., data=data_train_df)\par
+summary(nb)\par
+\par
+# Verifying naive bayes model performance on train data\par
+data_pred_nb_train <- predict(nb,data_train_df,type="class")\par
+confusion_matrix_nb_train = confusionMatrix(data_train_df$TenYearCHD,data_pred_nb_train)\par
+confusion_matrix_nb_train\par
+\par
+# Verifying naive bayes model performance on test data\par
+data_pred_nb_test <- predict(nb,data_test_df,type="class")\par
+confusion_matrix_nb_test = confusionMatrix(data_test_df$TenYearCHD,data_pred_nb_test)\par
+confusion_matrix_nb_test\par
+\par
+# Random Forest\par
+##install.packages("randomForest")\par
+library(randomForest)\par
+RF <- randomForest(data_train_df$TenYearCHD ~ ., data=data_train_df, \par
+                   ntree=500, mtry = 4, nodesize = 100,\par
+                   importance=TRUE)\par
+print(RF)\par
+plot(RF)\par
+varImpPlot(RF)\par
+# Verifying Randomforest model performance on train data\par
+data_pred_RF_train <- predict(RF, data=data_train_df, type="class")\par
+confusion_matrix_RF_train = confusionMatrix(data_train_df$TenYearCHD,data_pred_RF_train)\par
+confusion_matrix_RF_train\par
+\par
+# Verifying Randomforest model performance on test data\par
+data_pred_RF_test <- predict(RF, data=data_test_df, type="class")\par
+confusion_matrix_RF_test = confusionMatrix(data_test_df$TenYearCHD,data_pred_RF_test)\par
+confusion_matrix_RF_test # I am getting error when running CF on test data\par
+\par
+# K-nn Model\par
+library(class)\par
+data_pred_knn_train <- knn(train = data_train_df[,-16], test = data_train_df[,-16],cl = data_train_df[,16], k=11)\par
+confusion_matrix_knn_train = confusionMatrix(data_train_df$TenYearCHD,data_pred_knn_train)\par
+confusion_matrix_knn_train\par
+\par
+data_pred_knn_test <- knn(train = data_test_df[,-16], test = data_test_df[,-16],cl = data_test_df[,16], k=11)\par
+confusion_matrix_knn_test = confusionMatrix(data_test_df$TenYearCHD,data_pred_knn_test)\par
+confusion_matrix_knn_test\par
+\par
+}
